@@ -96,3 +96,103 @@
     (<= price MAX-PRICE)
   )
 )
+
+;; Executes secure balance transfers between accounts
+(define-private (transfer-balance
+    (amount uint)
+    (sender principal)
+    (recipient principal)
+  )
+  (let (
+      (sender-balance (default-to u0 (map-get? balances sender)))
+      (recipient-balance (default-to u0 (map-get? balances recipient)))
+    )
+    (if (>= sender-balance amount)
+      (begin
+        (map-set balances sender (- sender-balance amount))
+        (map-set balances recipient (+ recipient-balance amount))
+        (ok true)
+      )
+      ERR-INSUFFICIENT-BALANCE
+    )
+  )
+)
+
+;; Calculates real-time collateral ratio for risk assessment
+(define-private (calculate-collateral-ratio
+    (btc-amount uint)
+    (stablecoin-amount uint)
+  )
+  (if (is-eq stablecoin-amount u0)
+    PRECISION
+    (let (
+        (btc-value-usd (* btc-amount (var-get oracle-price)))
+        (collateral-ratio (/ (* btc-value-usd u100) stablecoin-amount))
+      )
+      collateral-ratio
+    )
+  )
+)
+
+;; Enforces minimum collateral requirements for vault safety
+(define-private (check-collateral-requirement
+    (btc-locked uint)
+    (stablecoin-amount uint)
+  )
+  (let ((ratio (calculate-collateral-ratio btc-locked stablecoin-amount)))
+    (if (>= ratio MINIMUM-COLLATERAL-RATIO)
+      (ok true)
+      ERR-INSUFFICIENT-COLLATERAL
+    )
+  )
+)
+
+;; Computes liquidity provider token allocation
+(define-private (calculate-lp-tokens
+    (btc-amount uint)
+    (stable-amount uint)
+  )
+  (let (
+      (pool-btc (var-get pool-btc-balance))
+      (pool-stable (var-get pool-stable-balance))
+    )
+    (if (is-eq pool-btc u0)
+      (sqrt (* btc-amount stable-amount))
+      (/ (* btc-amount (sqrt (* pool-btc pool-stable))) pool-btc)
+    )
+  )
+)
+
+;; Efficient integer square root implementation
+(define-private (sqrt (x uint))
+  (let ((next (+ (/ x u2) u1)))
+    (if (<= x u2)
+      u1
+      next
+    )
+  )
+)
+
+;; PROTOCOL INITIALIZATION & MANAGEMENT
+
+;; Initializes BitVault Protocol with starting oracle price
+(define-public (initialize (initial-price uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+    (asserts! (not (var-get contract-initialized)) ERR-ALREADY-INITIALIZED)
+    (asserts! (validate-price initial-price) ERR-INVALID-PRICE)
+    (var-set oracle-price initial-price)
+    (var-set contract-initialized true)
+    (ok true)
+  )
+)
+
+;; Updates Bitcoin price oracle with validated data
+(define-public (update-price (new-price uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+    (asserts! (validate-price new-price) ERR-INVALID-PRICE)
+    (var-set oracle-price new-price)
+    (ok true)
+  )
+)
